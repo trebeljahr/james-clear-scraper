@@ -29,8 +29,6 @@ async function getIssueLinks(): Promise<string[]> {
     const href = $(el).attr("href");
     if (!href) return;
 
-    console.log("Found link:", href);
-
     const match = href.match(/\/3-2-1\//i);
 
     if (match) {
@@ -113,7 +111,6 @@ async function saveAll(all: Issue[]): Promise<void> {
   await fs.writeFile(OUT_FILE, JSON.stringify(all, null, 2), {
     encoding: "utf-8",
   });
-  console.log(`Wrote ${all.length} issues to ${OUT_FILE}`);
 }
 
 async function main() {
@@ -159,7 +156,14 @@ async function main() {
     return 0;
   });
 
+  if (newResults.length === 0 && !force) {
+    console.log("No new issues to save. Exiting.");
+    return;
+  }
+
   await saveAll(allOrdered);
+
+  console.log(`Wrote ${newResults.length} issues to ${OUT_FILE}`);
 }
 
 main().catch((err) => {
