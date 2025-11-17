@@ -39,12 +39,10 @@ async function getIssueLinks(): Promise<string[]> {
 
   return Array.from(new Set(links));
 }
-
 async function extractQuestion(issueUrl: string): Promise<string | null> {
   const html = await fetchHtml(issueUrl);
   const $ = cheerio.load(html);
 
-  // Find the “1 QUESTION FOR YOU” heading
   const heading = $("h2")
     .filter((_, el) => {
       return $(el).text().trim().toUpperCase().includes("1 QUESTION FOR YOU");
@@ -56,40 +54,45 @@ async function extractQuestion(issueUrl: string): Promise<string | null> {
     return null;
   }
 
-  // Now, collect all next sibling <p> elements until we hit a greeting like "Until next week"
   const questionParts: string[] = [];
-
-  // Use nextAll to get all siblings after the heading
   const siblings = heading.nextAll();
 
-  siblings.each((_, el) => {
+  for (let i = 0; i < siblings.length; i++) {
+    const el = siblings[i];
     const elem = $(el);
 
-    // Only consider paragraphs
     if (elem.is("p")) {
       const text = elem.text().trim();
 
-      // If this paragraph is the greeting / sign-off, stop collecting
-      // We check for "until next" and "james clear" in the text (case-insensitive)
       const lower = text.toLowerCase();
-      if (lower.startsWith("until next") && lower.includes("james clear")) {
-        return false; // break out of .each
+
+      // Patterns that indicate the start of the sign-off / closing
+      const isSignOff =
+        (lower.startsWith("until next") && lower.includes("james clear")) ||
+        lower.startsWith("until next week") ||
+        lower.startsWith("until next time") ||
+        lower.startsWith("cheers") ||
+        lower.match(/^sincerely[, ]*james clear/) ||
+        lower.match(/^yours truly[, ]*james clear/);
+
+      if (isSignOff) {
+        break;
       }
 
-      // Otherwise it's part of the question, so add it
       questionParts.push(text);
     } else {
-      // Once we hit something that's not a <p>, we might still want to skip or stop.
-      // But for simplicity, let's skip anything that's not a <p>.
+      // If it's not a <p>, but maybe a different block type — you can decide
+      // whether to stop, continue, or ignore.
+      // For now, just keep going.
     }
-  });
+  }
 
   if (questionParts.length === 0) {
     console.warn("Found heading but no question paragraphs:", issueUrl);
     return null;
   }
 
-  // Join the parts with newlines (or space, depending how you want it)
+  // Combine paragraphs, preserving spacing
   const fullQuestion = questionParts.join("\n\n");
   return fullQuestion;
 }
