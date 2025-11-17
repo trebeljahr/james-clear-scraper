@@ -44,7 +44,7 @@ async function extractQuestion(issueUrl: string): Promise<string | null> {
   const html = await fetchHtml(issueUrl);
   const $ = cheerio.load(html);
 
-  // Find the heading "1 QUESTION FOR YOU" (case-insensitive)
+  // Find the “1 QUESTION FOR YOU” heading
   const heading = $("h2")
     .filter((_, el) => {
       return $(el).text().trim().toUpperCase().includes("1 QUESTION FOR YOU");
@@ -56,15 +56,42 @@ async function extractQuestion(issueUrl: string): Promise<string | null> {
     return null;
   }
 
-  // The question is likely in the next <p>
-  const p = heading.nextAll("p").first();
-  if (!p || p.length === 0) {
-    console.warn("No paragraph after heading on", issueUrl);
+  // Now, collect all next sibling <p> elements until we hit a greeting like "Until next week"
+  const questionParts: string[] = [];
+
+  // Use nextAll to get all siblings after the heading
+  const siblings = heading.nextAll();
+
+  siblings.each((_, el) => {
+    const elem = $(el);
+
+    // Only consider paragraphs
+    if (elem.is("p")) {
+      const text = elem.text().trim();
+
+      // If this paragraph is the greeting / sign-off, stop collecting
+      // We check for "until next" and "james clear" in the text (case-insensitive)
+      const lower = text.toLowerCase();
+      if (lower.startsWith("until next") && lower.includes("james clear")) {
+        return false; // break out of .each
+      }
+
+      // Otherwise it's part of the question, so add it
+      questionParts.push(text);
+    } else {
+      // Once we hit something that's not a <p>, we might still want to skip or stop.
+      // But for simplicity, let's skip anything that's not a <p>.
+    }
+  });
+
+  if (questionParts.length === 0) {
+    console.warn("Found heading but no question paragraphs:", issueUrl);
     return null;
   }
 
-  const text = p.text().trim();
-  return text;
+  // Join the parts with newlines (or space, depending how you want it)
+  const fullQuestion = questionParts.join("\n\n");
+  return fullQuestion;
 }
 
 function extractDateFromUrl(url: string): string {
@@ -95,7 +122,7 @@ async function main() {
   }
 
   // Write to a file in the same folder as this script
-  const outPath = join(__dirname, "..", "questions.json");
+  const outPath = join(__dirname, "questions.json");
   writeFileSync(outPath, JSON.stringify(results, null, 2), {
     encoding: "utf-8",
   });
