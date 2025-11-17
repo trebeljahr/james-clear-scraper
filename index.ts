@@ -1,6 +1,6 @@
 import axios from "axios";
 import * as cheerio from "cheerio";
-import { writeFileSync } from "fs";
+import { promises as fs } from "fs";
 import { join } from "path";
 
 const __dirname = new URL(".", import.meta.url).pathname;
@@ -13,6 +13,7 @@ interface Issue {
 
 const BASE = "https://jamesclear.com";
 const LISTING_URL = `${BASE}/3-2-1`;
+const OUT_FILE = join(__dirname, "questions.json");
 
 async function fetchHtml(url: string): Promise<string> {
   const resp = await axios.get(url);
@@ -30,7 +31,7 @@ async function getIssueLinks(): Promise<string[]> {
 
     console.log("Found link:", href);
 
-    const match = href.match(/\/3-2-1/i);
+    const match = href.match(/\/3-2-1\//i);
 
     if (match) {
       links.push(href);
@@ -39,14 +40,15 @@ async function getIssueLinks(): Promise<string[]> {
 
   return Array.from(new Set(links));
 }
+
 async function extractQuestion(issueUrl: string): Promise<string | null> {
   const html = await fetchHtml(issueUrl);
   const $ = cheerio.load(html);
 
   const heading = $("h2")
-    .filter((_, el) => {
-      return $(el).text().trim().toUpperCase().includes("1 QUESTION FOR YOU");
-    })
+    .filter((_, el) =>
+      $(el).text().trim().toUpperCase().includes("1 QUESTION FOR YOU")
+    )
     .first();
 
   if (!heading || heading.length === 0) {
@@ -57,83 +59,100 @@ async function extractQuestion(issueUrl: string): Promise<string | null> {
   const questionParts: string[] = [];
   const siblings = heading.nextAll();
 
-  for (let i = 0; i < siblings.length; i++) {
-    const el = siblings[i];
+  siblings.each((_, el) => {
     const elem = $(el);
-
-    if (elem.is("p")) {
-      const text = elem.text().trim();
-
-      const lower = text.toLowerCase();
-
-      // Patterns that indicate the start of the sign-off / closing
-      const isSignOff =
-        (lower.startsWith("until next") && lower.includes("james clear")) ||
-        lower.startsWith("until next week") ||
-        lower.startsWith("until next time") ||
-        lower.startsWith("cheers") ||
-        lower.match(/^sincerely[, ]*james clear/) ||
-        lower.match(/^yours truly[, ]*james clear/);
-
-      if (isSignOff) {
-        break;
-      }
-
-      questionParts.push(text);
-    } else {
-      // If it's not a <p>, but maybe a different block type — you can decide
-      // whether to stop, continue, or ignore.
-      // For now, just keep going.
+    if (!elem.is("p")) {
+      return;
     }
-  }
+
+    const text = elem.text().trim();
+    const lower = text.toLowerCase();
+
+    const isSignOff =
+      (lower.startsWith("until next") && lower.includes("james clear")) ||
+      lower.startsWith("until next week") ||
+      lower.startsWith("until next time") ||
+      lower.startsWith("cheers") ||
+      !!lower.match(/^sincerely[, ]*james clear/) ||
+      !!lower.match(/^yours truly[, ]*james clear/);
+
+    if (isSignOff) {
+      return false; // break out of the .each()
+    }
+
+    questionParts.push(text);
+  });
 
   if (questionParts.length === 0) {
     console.warn("Found heading but no question paragraphs:", issueUrl);
     return null;
   }
 
-  // Combine paragraphs, preserving spacing
-  const fullQuestion = questionParts.join("\n\n");
-  return fullQuestion;
+  return questionParts.join("\n\n");
 }
 
 function extractDateFromUrl(url: string): string {
-  // Example: https://jamesclear.com/3-2-1/november-13-2025
   const parts = url.split("/");
-  const last = parts[parts.length - 1];
+  return parts[parts.length - 1]; // e.g. "november-13-2025"
+}
 
-  return last || ""; // e.g. "november-13-2025"
+async function loadExisting(): Promise<Issue[]> {
+  try {
+    const data = await fs.readFile(OUT_FILE, { encoding: "utf-8" });
+    return JSON.parse(data) as Issue[];
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      // File does not exist yet
+      return [];
+    }
+    throw err;
+  }
+}
+
+async function saveAll(all: Issue[]): Promise<void> {
+  await fs.writeFile(OUT_FILE, JSON.stringify(all, null, 2), {
+    encoding: "utf-8",
+  });
+  console.log(`Wrote ${all.length} issues to ${OUT_FILE}`);
 }
 
 async function main() {
+  const force = process.argv.includes("--force");
+
+  console.log("Loading existing questions...");
+  const existing = await loadExisting();
+  const existingByUrl = new Set(existing.map((i) => i.url));
+
   console.log("Fetching issue links...");
   const issueLinks = await getIssueLinks();
-  console.log("Found", issueLinks.length, "issues");
 
-  const results: Issue[] = [];
+  console.log("Total issues found:", issueLinks.length);
 
-  for (const url of issueLinks) {
-    console.log("Processing", url);
-    const question = await extractQuestion(url);
-
-    const date = extractDateFromUrl(url);
-    console.log("Extracted question:", question, "for date:", date);
-
-    results.push({ date, url, question: question ?? "" });
-    // Optional: add a short delay to be polite
-    await new Promise((r) => setTimeout(r, 200)); // 200ms
-  }
-
-  // Write to a file in the same folder as this script
-  const outPath = join(__dirname, "questions.json");
-  writeFileSync(outPath, JSON.stringify(results, null, 2), {
-    encoding: "utf-8",
+  // Filter links
+  const toScrape = issueLinks.filter((url) => {
+    return force || !existingByUrl.has(url);
   });
 
-  console.log("Done! Wrote", results.length, "questions to", outPath);
+  console.log("Issues to scrape:", toScrape.length);
+
+  const newResults: Issue[] = [];
+
+  for (const url of toScrape) {
+    console.log("Processing", url);
+    const question = await extractQuestion(url);
+    const date = extractDateFromUrl(url);
+    newResults.push({ date, url, question: question ?? "" });
+
+    // Be polite / throttle
+    await new Promise((r) => setTimeout(r, 50));
+  }
+
+  const all = force ? newResults : [...existing, ...newResults];
+
+  await saveAll(all);
 }
 
 main().catch((err) => {
-  console.error("Error in scraper:", err);
+  console.error("Error:", err);
   process.exit(1);
 });
