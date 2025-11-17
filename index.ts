@@ -147,9 +147,19 @@ async function main() {
     await new Promise((r) => setTimeout(r, 50));
   }
 
+  console.log("New issues extracted:", newResults.length);
+
   const all = force ? newResults : [...existing, ...newResults];
 
-  await saveAll(all);
+  const allOrdered = all.sort((a, b) => {
+    const date1 = new Date(a.date);
+    const date2 = new Date(b.date);
+    if (date1 < date2) return -1;
+    if (date1 > date2) return 1;
+    return 0;
+  });
+
+  await saveAll(allOrdered);
 }
 
 main().catch((err) => {
