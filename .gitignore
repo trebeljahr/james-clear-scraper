@@ -29,3 +29,6 @@ secrets.env
 *.sublime-project
 *.sublime-workspace
 *.code-workspace
+# claude code
+.claude/settings.local.json
+.claude/worktrees/

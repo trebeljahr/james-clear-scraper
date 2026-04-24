@@ -1,7 +1,7 @@
-import axios from "axios";
-import * as cheerio from "cheerio";
 import { promises as fs } from "fs";
 import { join } from "path";
+import axios from "axios";
+import * as cheerio from "cheerio";
 
 const __dirname = new URL(".", import.meta.url).pathname;
 
@@ -44,9 +44,7 @@ async function extractQuestion(issueUrl: string): Promise<string | null> {
   const $ = cheerio.load(html);
 
   const heading = $("h2")
-    .filter((_, el) =>
-      $(el).text().trim().toUpperCase().includes("1 QUESTION FOR YOU")
-    )
+    .filter((_, el) => $(el).text().trim().toUpperCase().includes("1 QUESTION FOR YOU"))
     .first();
 
   if (!heading || heading.length === 0) {
